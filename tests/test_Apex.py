@@ -4,10 +4,13 @@ from __future__ import division, absolute_import, unicode_literals
 
 import datetime as dt
 import warnings
+import math
 
 import numpy as np
 import pytest
-from numpy.testing import assert_allclose
+from pytest import approx
+
+from numpy.testing import assert_allclose  # FIXME: finish replacing with pytest.approx
 
 from apexpy import fortranapex as fa
 from apexpy import Apex, ApexHeightError, helpers
@@ -21,35 +24,26 @@ from apexpy import Apex, ApexHeightError, helpers
 ##############################################################################
 
 
-###============================================================================
-### Test initiating the Apex class
-###============================================================================
+# ============================================================================
+# Test initiating the Apex class
+# ============================================================================
 
 
 def test_init_defaults():
     Apex()
 
 
-def test_init_date_int():
-    A = Apex(date=2015)
-    assert A.year == 2015
+@pytest.mark.parametrize('intime', [2015, 2015.5], ids=['int', 'float'])
+def test_init_date_types(intime):
+    A = Apex(date=intime)
+    assert A.year == intime
 
 
-def test_init_date_float():
-    A = Apex(date=2015.5)
-    assert A.year == 2015.5
-
-
-def test_init_date():
-    date = dt.date(2015, 1, 1)
-    A = Apex(date=date)
-    assert A.year == helpers.toYearFraction(date)
-
-
-def test_init_datetime():
-    datetime = dt.datetime(2015, 6, 1, 18, 23, 45)
-    A = Apex(date=datetime)
-    assert A.year == helpers.toYearFraction(datetime)
+@pytest.mark.parametrize('intime', [dt.date(2015, 1, 1), dt.datetime(2015, 6, 1, 18, 23, 45)],
+                          ids=['date', 'datetime'])
+def test_init_datetime(intime):
+    A = Apex(date=intime)
+    assert A.year == helpers.toYearFraction(intime)
 
 
 def test_init_datafile_IOError():
@@ -57,16 +51,15 @@ def test_init_datafile_IOError():
         Apex(date=2015, datafile='foo/path/to/datafile.blah')
 
 
-###============================================================================
-### Test the low-level interfaces to the fortran wrappers
-###============================================================================
+# ============================================================================
+# Test the low-level interfaces to the fortran wrappers
+# ============================================================================
 
 def test__geo2qd_scalar():
     A = Apex(date=2000, refh=300)
     for lat in [0, 30, 60, 89]:
         for lon in [-179, -90, 0, 90, 180]:
-            assert_allclose(A._geo2qd(lat, lon, 100),
-                            fa.apxg2q(lat, lon, 100, 0)[:2])
+            assert A._geo2qd(lat, lon, 100) == approx(fa.apxg2q(lat, lon, 100, 0)[:2])
 
 
 def test__geo2qd_array():
@@ -76,10 +69,8 @@ def test__geo2qd_array():
     lat2, lon2 = fa.apxg2q(30, 15, 200, 0)[:2]
     lat3, lon3 = fa.apxg2q(60, 15, 300, 0)[:2]
     lat4, lon4 = fa.apxg2q(90, 15, 400, 0)[:2]
-    assert_allclose(lats.astype(float), np.array([[lat1, lat2], [lat3, lat4]],
-                                                 dtype=float))
-    assert_allclose(lons.astype(float), np.array([[lon1, lon2], [lon3, lon4]],
-                                                 dtype=float))
+    assert lats.astype(float) == approx(np.array([[lat1, lat2], [lat3, lat4]], dtype=float))
+    assert lons.astype(float) == approx(np.array([[lon1, lon2], [lon3, lon4]], dtype=float))
 
 
 def test__geo2qd_longitude():
@@ -233,15 +224,14 @@ def test__basevec_longitude():
                             fa.apxg2q(lat, 15, 100, 1)[2:4])
 
 
-###============================================================================
-### Test the convert() method
-###============================================================================
+# ============================================================================
+# Test the convert() method
+# ============================================================================
 
 
 def test_convert_geo2apex():
     A = Apex(date=2000, refh=300)
-    assert_allclose(A.convert(60, 15, 'geo', 'apex', height=100),
-                    A.geo2apex(60, 15, 100))
+    assert A.convert(60, 15, 'geo', 'apex', height=100) == approx(A.geo2apex(60, 15, 100))
 
 
 def test_convert_geo2qd():
@@ -353,9 +343,9 @@ def test_convert_invalid_transformation():
         A.convert(0, 0, 'geo', 'foobar')
 
 
-###============================================================================
-### Test the geo2apex() method
-###============================================================================
+# ============================================================================
+# Test the geo2apex() method
+# ============================================================================
 
 
 def test_geo2apex():
@@ -373,17 +363,20 @@ def test_geo2apex_vectorization():
     assert A.geo2apex(60, 15, [100, 100])[0].shape == (2,)
 
 
-def test_geo2apex_invalid_lat():
+@pytest.mark.parametrize('lat', [91, -91])
+def test_geo2apex_invalid_lat(lat):
     A = Apex(date=2000, refh=300)
     with pytest.raises(ValueError):
-        A.geo2apex(91, 0, 0)
-    with pytest.raises(ValueError):
-        A.geo2apex(-91, 0, 0)
-    A.geo2apex(90, 0, 0)
-    A.geo2apex(-90, 0, 0)
+        A.geo2apex(lat, 0, 0)
 
-    assert_allclose(A.geo2apex(90+1e-5, 0, 0), A.geo2apex(90, 0, 0), rtol=0,
-                    atol=1e-8)
+
+@pytest.mark.parametrize('lat', [90, -90])
+def test_geo2apex_lat_bounds(lat):
+    A = Apex(date=2000, refh=300)
+    A.geo2apex(lat, 0, 0)
+
+    assert A.geo2apex(lat+math.copysign(1e-5, lat), 0, 0) == approx(A.geo2apex(lat, 0, 0),
+                      rel=0, abs=1e-8)
 
 
 def test_geo2apex_undefined_warning():
@@ -392,14 +385,14 @@ def test_geo2apex_undefined_warning():
         ret = A.geo2apex(0, 0, 0)
         A.geo2apex(0, 0, 0)
         assert ret[0] == -9999
-        assert len(w) == 2
+        assert len(w) == 1
         assert issubclass(w[-1].category, UserWarning)
         assert 'set to -9999 where' in str(w[-1].message)
 
 
-###============================================================================
-### Test the apex2geo() method
-###============================================================================
+# ============================================================================
+# Test the apex2geo() method
+# ============================================================================
 
 
 def test_apex2geo():
@@ -433,9 +426,9 @@ def test_apex2geo_invalid_lat():
                     rtol=0, atol=1e-8)
 
 
-###============================================================================
-### Test the geo2qd() method
-###============================================================================
+# ============================================================================
+# Test the geo2qd() method
+# ============================================================================
 
 
 def test_geo2qd():
@@ -466,9 +459,9 @@ def test_geo2qd_invalid_lat():
                     atol=1e-8)
 
 
-###============================================================================
-### Test the qd2geo() method
-###============================================================================
+# ============================================================================
+# Test the qd2geo() method
+# ============================================================================
 
 
 def test_qd2geo():
@@ -500,9 +493,9 @@ def test_qd2geo_invalid_lat():
                     rtol=0, atol=1e-8)
 
 
-###============================================================================
-### Test the apex2qd() method
-###============================================================================
+# ============================================================================
+# Test the apex2qd() method
+# ============================================================================
 
 
 def test_apex2qd():
@@ -545,9 +538,9 @@ def test_apex2qd_apexheight_over():
         A.apex2qd(0, 15, 301)
 
 
-###============================================================================
-### Test the qd2apex() method
-###============================================================================
+# ============================================================================
+# Test the qd2apex() method
+# ============================================================================
 
 
 def test_qd2apex():
@@ -590,9 +583,9 @@ def test_qd2apex_apexheight_over():
         A.qd2apex(0, 15, 299)
 
 
-###============================================================================
-### Test mlon2mlt()
-###============================================================================
+# ============================================================================
+# Test mlon2mlt()
+# ============================================================================
 
 
 def test_mlon2mlt_scalar():
@@ -645,9 +638,9 @@ def test_mlon2mlt_range():
                     rtol=1e-4)
 
 
-###============================================================================
-### Test mlt2mlon()
-###============================================================================
+# ============================================================================
+# Test mlt2mlon()
+# ============================================================================
 
 
 def test_mlt2mlon_scalar():
@@ -701,9 +694,9 @@ def test_mlt2mlon_range():
                     rtol=1e-4)
 
 
-###============================================================================
-### Test mlt/mlon back and forth
-###============================================================================
+# ============================================================================
+# Test mlt/mlon back and forth
+# ============================================================================
 
 
 def test_mlon2mlt2mlon():
@@ -726,9 +719,9 @@ def test_mlt2mlon2mlt():
     assert_allclose(A.mlt2mlon(A.mlon2mlt(360, date), date), 0)
 
 
-###============================================================================
-### Test the map_to_height() method
-###============================================================================
+# ============================================================================
+# Test the map_to_height() method
+# ============================================================================
 
 
 def test_map_to_height():
@@ -778,9 +771,9 @@ def test_map_to_height_ApexHeightError():
         A.map_to_height(0, 15, 100, 10000)
 
 
-###============================================================================
-### Test the map_E_to_height() method
-###============================================================================
+# ============================================================================
+# Test the map_E_to_height() method
+# ============================================================================
 
 
 def test_map_E_to_height():
@@ -837,9 +830,9 @@ def test_map_E_to_height():
                     rtol=1e-5)
 
 
-###============================================================================
-### Test the map_V_to_height() method
-###============================================================================
+# ============================================================================
+# Test the map_V_to_height() method
+# ============================================================================
 
 
 def test_map_V_to_height():
@@ -896,9 +889,9 @@ def test_map_V_to_height():
                     rtol=1e-5)
 
 
-###============================================================================
-### Test basevectors_qd()
-###============================================================================
+# ============================================================================
+# Test basevectors_qd()
+# ============================================================================
 
 
 # test coords
@@ -924,6 +917,7 @@ def test_basevectors_qd_scalar_qd():
                     A._basevec(glat, glon, 100))
 
 # test shapes and vectorization of arguments
+
 
 def test_basevectors_qd_scalar_shape():
     A = Apex(date=2000, refh=300)
@@ -958,9 +952,9 @@ def test_basevectors_qd_array():
     assert_allclose(f2[:, 1], f2_lat30)
 
 
-###============================================================================
-### Test basevectors_apex()
-###============================================================================
+# ============================================================================
+# Test basevectors_apex()
+# ============================================================================
 
 
 # test against return from _geo2apexall for different coords
@@ -1194,15 +1188,15 @@ def test_basevectors_apex_invalid_scalar():
         (f1, f2, f3, g1, g2, g3, d1, d2, d3, e1, e2,
          e3) = A.basevectors_apex(0, 0, 0)
         A.basevectors_apex(0, 0, 0)
-        assert len(w) == 2
+        assert len(w) == 1
         assert issubclass(w[-1].category, UserWarning)
         assert 'set to -9999 where' in str(w[-1].message)
 
     invalid = [-9999, -9999, -9999]
     assert not np.allclose(f1, invalid[:2])
     assert not np.allclose(f2, invalid[:2])
-    assert_allclose(f3, invalid)
-    assert_allclose(g1, invalid)
+    assert f3 == approx(invalid)
+    assert g1 == approx(invalid)
     assert_allclose(g2, invalid)
     assert_allclose(g3, invalid)
     assert_allclose(d1, invalid)
@@ -1213,9 +1207,9 @@ def test_basevectors_apex_invalid_scalar():
     assert_allclose(e3, invalid)
 
 
-###============================================================================
-### Test the get_apex() method
-###============================================================================
+# ============================================================================
+# Test the get_apex() method
+# ============================================================================
 
 
 def test_get_apex():
@@ -1236,9 +1230,9 @@ def test_get_apex_invalid_lat():
     assert_allclose(A.get_apex(90+1e-5), A.get_apex(90), rtol=0, atol=1e-8)
 
 
-###============================================================================
-### Test the set_epoch() method
-###============================================================================
+# ============================================================================
+# Test the set_epoch() method
+# ============================================================================
 
 
 def test_set_epoch():
@@ -1262,9 +1256,9 @@ def test_set_epoch():
     assert_allclose(ret_2000_8_py, ret_2000_8_apex)
 
 
-###============================================================================
-### Test the set_refh() method
-###============================================================================
+# ============================================================================
+# Test the set_refh() method
+# ============================================================================
 
 
 def test_set_refh():
@@ -1328,4 +1322,4 @@ def test_bvectors_apex():
 
 
 if __name__ == '__main__':
-    pytest.main()
+    pytest.main([__file__])
